@@ -1,9 +1,4 @@
 #include "ruby.h"
-
-#ifndef RUBY_19
-#include "rubysig.h"
-#endif
-
 #include "netifaces.h"
 
 #if !defined(WIN32)
@@ -126,7 +121,7 @@ string_from_sockaddr (struct sockaddr *addr,
                    NULL, 0,
                    NI_NUMERICHOST) != 0)
   {
-        int n, len;
+    int n, len;
     char *ptr;
     const char *data;
 
@@ -159,7 +154,7 @@ string_from_sockaddr (struct sockaddr *addr,
 #endif
       /* We don't know anything about this sockaddr, so just display
          the entire data area in binary. */
-      len -= (sizeof (struct sockaddr) - sizeof (addr->sa_data));
+      len -= (int)(sizeof (struct sockaddr) - sizeof (addr->sa_data));
       data = addr->sa_data;
 #if defined(AF_PACKET)
     }
@@ -188,10 +183,10 @@ string_from_sockaddr (struct sockaddr *addr,
 
 static VALUE add_to_family(VALUE result, VALUE family, VALUE value)
 {
+  VALUE list;
   Check_Type(result, T_HASH);
   Check_Type(family, T_FIXNUM);
   Check_Type(value, T_HASH);
-  VALUE list;
 
   list = rb_hash_aref(result, family);
 
@@ -208,19 +203,34 @@ static VALUE add_to_family(VALUE result, VALUE family, VALUE value)
 VALUE
 rbnetifaces_s_addresses (VALUE class, VALUE dev)
 {
-  Check_Type(dev, T_STRING);
-
   VALUE result;
   int found = FALSE;
-  result = rb_hash_new();
-
 #if defined(WIN32)
   PIP_ADAPTER_INFO pAdapterInfo = NULL;
   PIP_ADAPTER_INFO pInfo = NULL;
   ULONG ulBufferLength = 0;
   DWORD dwRet;
   PIP_ADDR_STRING str;
+#elif HAVE_GETIFADDRS
+  struct ifaddrs *addrs = NULL;
+  struct ifaddrs *addr = NULL;
+  VALUE result2;
+#elif HAVE_SOCKET_IOCTLS
+  int sock;
+  struct CNAME(ifreq) ifr;
+  char buffer[256];
+  int is_p2p = FALSE;
+  VALUE rbaddr = Qnil;
+  VALUE rbnetmask = Qnil;
+  VALUE rbbraddr = Qnil;
+  VALUE rbdstaddr = Qnil;
+  VALUE result2;
+#endif
 
+  Check_Type(dev, T_STRING);
+  result = rb_hash_new();
+
+#if defined(WIN32)
   //First, retrieve the adapter information.  We do this in a loop, in
   //case someone adds or removes adapters in the meantime.
   do
@@ -256,28 +266,28 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
     //dev is the iface GUID on windows with "\\Device\\NPF_" prefix
     int cmpAdapterNamelen = (MAX_ADAPTER_NAME_LENGTH + 4) + 12;
     char cmpAdapterName[cmpAdapterNamelen];
-    memset(cmpAdapterName, 0x00, cmpAdapterNamelen);
-    strncpy(cmpAdapterName, "\\Device\\NPF_", 12);
     int AdapterName_len = strlen(pInfo->AdapterName);
-    strncpy(cmpAdapterName + 12, pInfo->AdapterName, AdapterName_len);
-    if (strcmp (cmpAdapterName, StringValuePtr(dev)) != 0)
-      continue;
 
     VALUE rbhardw = Qnil;
     VALUE rbaddr = Qnil;
     VALUE rbnetmask = Qnil;
     VALUE rbbraddr = Qnil;
 
+    memset(cmpAdapterName, 0x00, cmpAdapterNamelen);
+    strncpy(cmpAdapterName, "\\Device\\NPF_", 12);
+    strncpy(cmpAdapterName + 12, pInfo->AdapterName, AdapterName_len);
+    if (strcmp (cmpAdapterName, StringValuePtr(dev)) != 0)
+      continue;
+
     found = TRUE;
 
     // Do the physical address
     if (256 >= 3 * pInfo->AddressLength)
     {
-      VALUE hash_hardw;
-      hash_hardw = rb_hash_new();
-
       char *ptr = buffer;
       unsigned n;
+      VALUE hash_hardw;
+      hash_hardw = rb_hash_new();
 
       *ptr = '\0';
       for (n = 0; n < pInfo->AddressLength; ++n)
@@ -335,9 +345,6 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
   free (pAdapterInfo);
 
 #elif HAVE_GETIFADDRS
-  struct ifaddrs *addrs = NULL;
-  struct ifaddrs *addr = NULL;
-
   if (getifaddrs (&addrs) < 0)
   {
     rb_raise(rb_eRuntimeError, "Unknow error at OS level");
@@ -371,7 +378,6 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
     if (string_from_sockaddr (addr->ifa_broadaddr, buffer, sizeof (buffer)) == 0)
       rbbraddr = rb_str_new2(buffer);
 
-    VALUE result2;
     result2 = rb_hash_new();
 
     if (rbaddr)
@@ -391,22 +397,13 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
     freeifaddrs (addrs);
 #elif HAVE_SOCKET_IOCTLS
 
-  int sock = socket(AF_INET, SOCK_DGRAM, 0);
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   if (sock < 0)
   {
         rb_raise(rb_eRuntimeError, "Unknow error at OS level");
     return Qnil;
   }
-
-  struct CNAME(ifreq) ifr;
-
-  char buffer[256];
-  int is_p2p = FALSE;
-  VALUE rbaddr = Qnil;
-  VALUE rbnetmask = Qnil;
-  VALUE rbbraddr = Qnil;
-  VALUE rbdstaddr = Qnil;
 
   strncpy (ifr.CNAME(ifr_name), StringValuePtr(dev), IFNAMSIZ);
 
@@ -510,7 +507,6 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
   }
 
 #endif
-  VALUE result2;
   result2 = rb_hash_new();
 
   if (rbaddr)
@@ -538,15 +534,26 @@ rbnetifaces_s_addresses (VALUE class, VALUE dev)
 VALUE
 rbnetifaces_s_interfaces (VALUE self)
 {
-    VALUE result;
-  result = rb_ary_new();
-
+  VALUE result;
 #if defined(WIN32)
   PIP_ADAPTER_INFO pAdapterInfo = NULL;
   PIP_ADAPTER_INFO pInfo = NULL;
   ULONG ulBufferLength = 0;
   DWORD dwRet;
+#elif HAVE_GETIFADDRS
+  const char *prev_name = NULL;
+  struct ifaddrs *addrs = NULL;
+  struct ifaddrs *addr = NULL;
+#elif HAVE_SIOCGIFCONF
+  const char *prev_name = NULL;
+  int fd, len, n;
+  struct CNAME(ifconf) ifc;
+  struct CNAME(ifreq) *pfreq;
+#endif
 
+  result = rb_ary_new();
+
+#if defined(WIN32)
   // First, retrieve the adapter information
   do {
     dwRet = GetAdaptersInfo(pAdapterInfo, &ulBufferLength);
@@ -583,11 +590,12 @@ rbnetifaces_s_interfaces (VALUE self)
   {
     int outputnamelen = (MAX_ADAPTER_NAME_LENGTH + 4) + 12;
     char outputname[outputnamelen];
+    int AdapterName_len = strlen(pInfo->AdapterName);
+    VALUE ifname;
     memset(outputname, 0x00, outputnamelen);
     strncpy(outputname, "\\Device\\NPF_", 12);
-    int AdapterName_len = strlen(pInfo->AdapterName);
     strncpy(outputname + 12, pInfo->AdapterName, AdapterName_len);
-    VALUE ifname =  rb_str_new2(outputname) ;
+    ifname =  rb_str_new2(outputname) ;
 
     if(!rb_ary_includes(result, ifname))
       rb_ary_push(result, ifname);
@@ -596,10 +604,6 @@ rbnetifaces_s_interfaces (VALUE self)
   free (pAdapterInfo);
 
 #elif HAVE_GETIFADDRS
-  const char *prev_name = NULL;
-  struct ifaddrs *addrs = NULL;
-  struct ifaddrs *addr = NULL;
-
   if (getifaddrs (&addrs) < 0)
   {
     rb_raise(rb_eRuntimeError, "Unknow error at OS level");
@@ -621,10 +625,8 @@ rbnetifaces_s_interfaces (VALUE self)
   freeifaddrs (addrs);
 #elif HAVE_SIOCGIFCONF
 
-  const char *prev_name = NULL;
-  int fd = socket (AF_INET, SOCK_DGRAM, 0);
-  struct CNAME(ifconf) ifc;
-  int len = -1, n;
+  fd = socket (AF_INET, SOCK_DGRAM, 0);
+  len = -1;
   if (fd < 0) {
     rb_raise(rb_eRuntimeError, "Unknow error at OS level");
     return Qnil;
@@ -675,7 +677,7 @@ rbnetifaces_s_interfaces (VALUE self)
     return Qnil;
   }
 
-  struct CNAME(ifreq) *pfreq = ifc.CNAME(ifc_req);
+  *pfreq = ifc.CNAME(ifc_req);
 
   for (n = 0; n < ifc.CNAME(ifc_len)/sizeof(struct CNAME(ifreq));n++,pfreq++)
   {
@@ -744,13 +746,22 @@ rbnetifaces_s_interface_info (VALUE self, VALUE dev)
 
   for (pInfo = pAdapterInfo; pInfo; pInfo = pInfo->Next)
   {
+    // registry name location
+    const char* prefix = "SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\";
+    const char* sufix  = "\\Connection";
+    int prefix_len, sufix_len, adaptername_len;
+    char* keypath = NULL;
+    HKEY hKey;
+    LONG lRet = 0;
+    LPBYTE buffer = NULL;
+    DWORD dwSize = 0;
 
     //dev is the iface GUID on windows with "\\Device\\NPF_" prefix
     int cmpAdapterNamelen = (MAX_ADAPTER_NAME_LENGTH + 4) + 12;
     char cmpAdapterName[cmpAdapterNamelen];
+    int AdapterName_len = strlen(pInfo->AdapterName);
     memset(cmpAdapterName, 0x00, cmpAdapterNamelen);
     strncpy(cmpAdapterName, "\\Device\\NPF_", 12);
-    int AdapterName_len = strlen(pInfo->AdapterName);
     strncpy(cmpAdapterName + 12, pInfo->AdapterName, AdapterName_len);
     if (strcmp (cmpAdapterName, StringValuePtr(dev)) != 0)
       continue;
@@ -760,22 +771,15 @@ rbnetifaces_s_interface_info (VALUE self, VALUE dev)
     rb_hash_aset(result, rb_str_new2("guid"), rb_str_new2(pInfo->AdapterName));
 
     // Get the name from the registry
-    const char* prefix = "SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\";
-    const char* sufix  = "\\Connection";
-    int prefix_len = strlen(prefix);
-    int sufix_len  = strlen(sufix);
-    int adaptername_len = strlen(pInfo->AdapterName);
-    char* keypath = NULL;
+    prefix_len = strlen(prefix);
+    sufix_len  = strlen(sufix);
+    adaptername_len = strlen(pInfo->AdapterName);
     keypath = malloc(prefix_len +  sufix_len + adaptername_len + 1);
     memset(keypath, 0x00, prefix_len +  sufix_len + adaptername_len + 1);
     strncpy(keypath, prefix, prefix_len);
     strncpy(keypath + prefix_len, pInfo->AdapterName, adaptername_len);
     strncpy(keypath + prefix_len + adaptername_len, sufix, sufix_len);
 
-    HKEY hKey;
-    LONG lRet = 0;
-    LPBYTE buffer = NULL;
-    DWORD dwSize = 0;
     if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, keypath, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
     {
       // obtain current value size
