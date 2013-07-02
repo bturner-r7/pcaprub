@@ -126,20 +126,39 @@ class Pcap::UnitTest < Test::Unit::TestCase
 
   def test_netifaces_constants
     log "AF_LINK Value is #{Pcap::AF_LINK}"
+    assert_equal(Fixnum, Pcap::AF_LINK.class)
     log "AF_INET Value is #{Pcap::AF_INET}"
+    assert_equal(Fixnum, Pcap::AF_INET.class)
     log "AF_INET6 Value is #{Pcap::AF_INET6}" if Pcap.const_defined?(:AF_INET6)
+    assert_equal(Fixnum, Pcap::AF_INET6.class) if Pcap.const_defined?(:AF_INET6)
   end
 
   def test_netifaces_functions
+    mac = /^([\da-fA-F]{2}:){5}[\da-fA-F]{2}$/
+    ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/
+    ipv6 = /:[\da-fA-F]/
     Pcap.interfaces.sort.each do |iface|
       log "#{iface} :"
+      assert_equal(String, iface.class)
       Pcap.addresses(iface).sort.each do |family,values|
         log "\t#{family} :"
+        assert_equal(Fixnum, family.class)
         values.each do |val|
           log "\t\taddr : #{val['addr']}" if val.has_key?("addr")
           log "\t\tnetmask : #{val['netmask']}" if val.has_key?("netmask")
           log "\t\tbroadcast : #{val['broadcast']}" if val.has_key?("broadcast")
           log "\n"
+          case family
+          when Pcap::AF_LINK
+            assert_match(mac, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+          when Pcap::AF_INET
+            assert_match(ipv4, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+            assert_match(ipv4, val['netmask']) if val.has_key?('netmask') && !val['netmask'].empty?
+            assert_match(ipv4, val['broadcast']) if val.has_key?('broadcast') && !val['broadcast'].empty?
+          when Pcap::AF_INET6
+            assert_match(ipv6, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+            assert_match(ipv6, val['netmask']) if val.has_key?('netmask') && !val['netmask'].empty?
+          end
         end
       end
     end
