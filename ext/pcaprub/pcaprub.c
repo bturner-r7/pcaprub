@@ -108,7 +108,6 @@ rbpcap_s_lookupaddrs(VALUE self,VALUE dev)
     char *ldev = NULL;
     pcap_addr_t *addresses, *a = NULL;
     char eb[PCAP_ERRBUF_SIZE];
-    VALUE ret_dev;  /* device string to return */   
     pcap_if_t *alldevs;
     pcap_if_t *d;
     VALUE list;
@@ -272,8 +271,8 @@ static VALUE
 rbpcap_setmonitor(VALUE self, VALUE mode)
 {
   rbpcap_t *rbp;
-  Data_Get_Struct(self, rbpcap_t, rbp);
   int rfmon_mode = 0;
+  Data_Get_Struct(self, rbpcap_t, rbp);
   if (mode == Qtrue) {
     rfmon_mode = 1;
   } else if (mode == Qfalse) {
@@ -355,8 +354,8 @@ static VALUE
 rbpcap_setpromisc(VALUE self, VALUE mode)
 {
   rbpcap_t *rbp;
-  Data_Get_Struct(self, rbpcap_t, rbp);
   int promisc_mode = 0;
+  Data_Get_Struct(self, rbpcap_t, rbp);
   if (mode == Qtrue) {
     promisc_mode = 1;
   } else if (mode == Qfalse) {
