@@ -6,6 +6,11 @@ $:.unshift(File.join(File.dirname(base)))
 require 'test/unit'
 require 'pcaprub'
 
+def log(msg)
+  # Uncomment following line to print debug log messages:
+  #puts msg
+end
+
 #
 # Simple unit test, requires r00t.
 #
@@ -13,19 +18,19 @@ require 'pcaprub'
 class Pcap::UnitTest < Test::Unit::TestCase
   def test_version
     assert_equal(String, Pcap.version.class)
-    puts "Pcaprub version: #{Pcap.version}"
+    log "Pcaprub version: #{Pcap.version}"
   end
 
   def test_lookupdev
     assert_equal(String, Pcap.lookupdev.class)
-    puts "Pcaprub default device: #{Pcap.lookupdev}"
+    log "Pcaprub default device: #{Pcap.lookupdev}"
   end
 
   def test_lookupnet
     dev = Pcap.lookupdev
     assert_equal(Array, Pcap.lookupnet(dev).class)
     net = Pcap.lookupnet(dev)
-    puts "Pcaprub net (#{dev}): #{net[0]} #{[net[1]].pack("N").unpack("H*")[0]}"
+    log "Pcaprub net (#{dev}): #{net[0]} #{[net[1]].pack("N").unpack("H*")[0]}"
   end
 
   def test_pcap_new
@@ -102,7 +107,7 @@ class Pcap::UnitTest < Test::Unit::TestCase
     end
 
     t.kill
-    puts "Background thread ticked #{@c} times while capture was running"
+    log "Background thread ticked #{@c} times while capture was running"
     true
   end
 
@@ -120,21 +125,21 @@ class Pcap::UnitTest < Test::Unit::TestCase
   end
 
   def test_netifaces_constants
-    puts "AF_LINK Value is #{Pcap::AF_LINK}"
-    puts "AF_INET Value is #{Pcap::AF_INET}"
-    puts "AF_INET6 Value is #{Pcap::AF_INET6}" if Pcap.const_defined?(:AF_INET6)
+    log "AF_LINK Value is #{Pcap::AF_LINK}"
+    log "AF_INET Value is #{Pcap::AF_INET}"
+    log "AF_INET6 Value is #{Pcap::AF_INET6}" if Pcap.const_defined?(:AF_INET6)
   end
 
   def test_netifaces_functions
     Pcap.interfaces.sort.each do |iface|
-      puts "#{iface} :"
+      log "#{iface} :"
       Pcap.addresses(iface).sort.each do |family,values|
-        puts "\t#{family} :"
+        log "\t#{family} :"
         values.each do |val|
-          puts "\t\taddr : #{val['addr']}" if val.has_key?("addr")
-          puts "\t\tnetmask : #{val['netmask']}" if val.has_key?("netmask")
-          puts "\t\tbroadcast : #{val['broadcast']}" if val.has_key?("broadcast")
-          puts "\n"
+          log "\t\taddr : #{val['addr']}" if val.has_key?("addr")
+          log "\t\tnetmask : #{val['netmask']}" if val.has_key?("netmask")
+          log "\t\tbroadcast : #{val['broadcast']}" if val.has_key?("broadcast")
+          log "\n"
         end
       end
     end
