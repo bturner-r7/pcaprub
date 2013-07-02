@@ -11,6 +11,22 @@ def log(msg)
   #puts msg
 end
 
+def ipv4_dev
+  @ipv4_dev ||= Pcap.interfaces.find do |iface|
+    Pcap.addresses(iface).any? do |family, values|
+      if family == Pcap::AF_INET
+        values.any? do |val|
+          val.has_key?('addr') &&
+            !val['addr'].empty? &&
+            !(val['addr'] =~ /^(127|0)\./)
+        end
+      else
+        false
+      end
+    end
+  end
+end
+
 #
 # Simple unit test, requires r00t.
 #
@@ -27,9 +43,10 @@ class Pcap::UnitTest < Test::Unit::TestCase
   end
 
   def test_lookupnet
-    dev = Pcap.lookupdev
-    assert_equal(Array, Pcap.lookupnet(dev).class)
+    dev = ipv4_dev
+    assert_equal(String, dev.class, "Cannot find IPv4 device")
     net = Pcap.lookupnet(dev)
+    assert_equal(Array, net.class)
     log "Pcaprub net (#{dev}): #{net[0]} #{[net[1]].pack("N").unpack("H*")[0]}"
   end
 
@@ -50,7 +67,8 @@ class Pcap::UnitTest < Test::Unit::TestCase
   end
 
   def test_pcap_setfilter
-    d = Pcap.lookupdev
+    d = ipv4_dev
+    assert_equal(String, d.class, "Cannot find IPv4 device")
     o = Pcap.open_live(d, 65535, true, 1)
     r = o.setfilter("not ip")
     assert_equal(Pcap, r.class)
@@ -91,7 +109,8 @@ class Pcap::UnitTest < Test::Unit::TestCase
   end
 
   def test_pcap_next
-    d = Pcap.lookupdev
+    d = ipv4_dev
+    assert_equal(String, d.class, "Cannot find IPv4 device")
     o = Pcap.open_live(d, 1344, true, 1)
 
     @c = 0
@@ -116,7 +135,8 @@ class Pcap::UnitTest < Test::Unit::TestCase
   end
 
   def test_create_from_primitives
-    d = Pcap.lookupdev
+    d = ipv4_dev
+    assert_equal(String, d.class, "Cannot find IPv4 device")
     o = Pcap.create(d).setsnaplen(65535).settimeout(100).setpromisc(true)
     assert_equal(o, o.activate)
     o.close
