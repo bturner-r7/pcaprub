@@ -119,6 +119,8 @@ if /i386-mingw32/ =~ RUBY_PLATFORM
   have_library("wpcap", "pcap_open_live")
   have_library("wpcap", "pcap_setnonblock")
 
+  have_func('rb_thread_blocking_region')
+
 elsif /i386-mswin32/ =~ RUBY_PLATFORM
   pcap_dir        = with_config("pcap-dir", "C:\\WpdPack")
   pcap_includedir = with_config("pcap-includedir", pcap_dir + "\\include")
@@ -128,6 +130,8 @@ elsif /i386-mswin32/ =~ RUBY_PLATFORM
   $LDFLAGS = "/link /LIBPATH:#{pcap_libdir}"
   have_library("wpcap", "pcap_open_live")
   have_library("wpcap", "pcap_setnonblock")
+
+  have_func('rb_thread_blocking_region')
 else
   have_library("pcap", "pcap_open_live", ["pcap.h"])
   have_library("pcap", "pcap_setnonblock", ["pcap.h"])

@@ -20,10 +20,7 @@
 static VALUE mPCAP;
 static VALUE rb_cPcap, rb_cPkt;
 static VALUE ePCAPRUBError, eDumperError, eBindingError, eBPFilterError;
-
-#if defined(WIN32)
-static VALUE rbpcap_thread_wait_handle(HANDLE fno);
-#endif
+void rbpcap_thread_wait_fd(int fno);
 
 // Now defined in Native Ruby
 // #define PCAPRUB_VERSION "*.*.*"
@@ -914,18 +911,14 @@ static VALUE
 rbpcap_each_data(VALUE self)
 {
   rbpcap_t *rbp;
-#if defined(WIN32)
-  HANDLE fno;
-#else
   int fno = -1;
-#endif
 	
   Data_Get_Struct(self, rbpcap_t, rbp);
 
 	if(! rbpcap_ready(rbp)) return self; 
 	
 #if defined(WIN32)
-  fno = pcap_getevent(rbp->pd);
+  fno = (int)pcap_getevent(rbp->pd);
 #else
   fno = pcap_get_selectable_fd(rbp->pd);
 #endif
@@ -933,11 +926,7 @@ rbpcap_each_data(VALUE self)
   for(;;) {
   	VALUE packet = rbpcap_next_data(self);
   	if(packet == Qnil && rbp->type == OFFLINE) break;
-#if defined(WIN32)
-	  packet == Qnil ? rbpcap_thread_wait_handle(fno) : rb_yield(packet);
-#else
-	  packet == Qnil ? rb_thread_wait_fd(fno) : rb_yield(packet);
-#endif
+  	packet == Qnil ? rbpcap_thread_wait_fd(fno) : rb_yield(packet);
   }
 
   return self;
@@ -955,18 +944,14 @@ static VALUE
 rbpcap_each_packet(VALUE self)
 {
   rbpcap_t *rbp;
-#if defined(WIN32)
-  HANDLE fno;
-#else
   int fno = -1;
-#endif
 	
   Data_Get_Struct(self, rbpcap_t, rbp);
 
 	if(! rbpcap_ready(rbp)) return self; 
 	
 #if defined(WIN32)
-  fno = pcap_getevent(rbp->pd);
+  fno = (int)pcap_getevent(rbp->pd);
 #else
   fno = pcap_get_selectable_fd(rbp->pd);
 #endif
@@ -974,11 +959,7 @@ rbpcap_each_packet(VALUE self)
   for(;;) {
   	VALUE packet = rbpcap_next_packet(self);
   	if(packet == Qnil && rbp->type == OFFLINE) break;
-#if defined(WIN32)
-	  packet == Qnil ? rbpcap_thread_wait_handle(fno) : rb_yield(packet);
-#else
-	  packet == Qnil ? rb_thread_wait_fd(fno) : rb_yield(packet);
-#endif
+  	packet == Qnil ? rbpcap_thread_wait_fd(fno) : rb_yield(packet);
   }
 
   return self;
@@ -1193,28 +1174,23 @@ rbpcap_thread_wait_handle_blocking(void *data)
   result = (VALUE)WaitForSingleObject(data, 100);
   return result;
 }
+#endif
 
-/*
-*
-* Waits for the HANDLE returned by pcap_getevent to have data
-*
-*/
-static VALUE
-rbpcap_thread_wait_handle(HANDLE fno)
+void
+rbpcap_thread_wait_fd(int fno)
 {
-  VALUE result;
-#if MAKE_TRAP
-  // Ruby 1.8 doesn't support rb_thread_blocking_region
-  result = rb_thread_polling();
-#else
-  result = (VALUE)rb_thread_blocking_region(
+#if defined(WIN32)
+#ifdef HAVE_RB_THREAD_BLOCKING_REGION
+  rb_thread_blocking_region(
       rbpcap_thread_wait_handle_blocking,
-      fno, RUBY_UBF_IO, 0);
+      (HANDLE)fno, RUBY_UBF_IO, 0);
+#else
+  rb_thread_polling();
 #endif
-  return result;
+#else
+  rb_thread_wait_fd(fno);
+#endif
 }
-#endif
-
 
 void
 Init_pcaprub()
