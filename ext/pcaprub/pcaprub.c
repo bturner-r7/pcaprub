@@ -1174,7 +1174,7 @@ static VALUE
 rbpcap_thread_wait_handle_blocking(void *data)
 {
   VALUE result;
-  result = (VALUE)WaitForSingleObject(data, 100);
+  result = (VALUE)WaitForSingleObject(data, -1);
   return result;
 }
 #endif
