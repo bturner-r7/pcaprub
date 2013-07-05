@@ -135,6 +135,8 @@ elsif /i386-mswin32/ =~ RUBY_PLATFORM
 else
   have_library("pcap", "pcap_open_live", ["pcap.h"])
   have_library("pcap", "pcap_setnonblock", ["pcap.h"])
+  have_header('ruby/io.h')
+  have_func('rb_wait_for_single_fd')
 end
 
 create_makefile(extension_name)

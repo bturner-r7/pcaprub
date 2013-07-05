@@ -1,4 +1,7 @@
 #include "ruby.h"
+#ifdef HAVE_RUBY_IO_H
+#include "ruby/io.h"
+#endif
 
 #ifdef MAKE_TRAP
 #include "rubysig.h"
@@ -1188,7 +1191,21 @@ rbpcap_thread_wait_fd(int fno)
   rb_thread_polling();
 #endif
 #else
-  rb_thread_wait_fd(fno);
+#ifdef HAVE_RB_WAIT_FOR_SINGLE_FD
+  int result = 0;
+  if (fno < 0) {
+    rb_raise(rb_eIOError, "closed stream");
+  }
+  result = rb_wait_for_single_fd(fno, RB_WAITFD_IN, NULL);
+  if (result < 0) {
+    rb_sys_fail(0);
+  }
+#else
+  fd_set rfds;
+  FD_ZERO(&rfds);
+  FD_SET(fno, &rfds);
+  rb_thread_select(fno + 1, &rfds, NULL, NULL, NULL);
+#endif
 #endif
 }
 
