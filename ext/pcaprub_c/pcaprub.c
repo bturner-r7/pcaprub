@@ -22,7 +22,11 @@
 
 static VALUE mPCAP;
 static VALUE rb_cPcap, rb_cPkt;
-static VALUE ePCAPRUBError, eDumperError, eBindingError, eBPFilterError;
+static VALUE ePCAPRUBError, eDumperError, eBindingError, eBPFilterError, eLinkTypeError;
+
+#if defined(WIN32)
+static VALUE rbpcap_thread_wait_handle(HANDLE fno);
+#endif
 void rbpcap_thread_wait_fd(int fno);
 
 // Now defined in Native Ruby
@@ -33,8 +37,8 @@ void rbpcap_thread_wait_fd(int fno);
 
 #if !defined(PCAP_NETMASK_UNKNOWN)
 /*
-* Version of libpcap < 1.1 
-* Value to pass to pcap_compile() as the netmask if you dont know what the netmask is. 
+* Version of libpcap < 1.1
+* Value to pass to pcap_compile() as the netmask if you dont know what the netmask is.
 */
 #define PCAP_NETMASK_UNKNOWN  0xffffffff
 #endif
@@ -54,7 +58,7 @@ typedef struct rbpcapjob {
 } rbpcapjob_t;
 
 typedef struct rbpacket {
-  struct pcap_pkthdr* hdr;
+  struct pcap_pkthdr hdr;
   u_char* pkt;
 } rbpacket_t;
 
@@ -69,7 +73,7 @@ rbpcap_s_lookupdev(VALUE self)
   char *dev = NULL;
   char eb[PCAP_ERRBUF_SIZE];
   VALUE ret_dev;  /* device string to return */
-#if defined(WIN32)  /* pcap_lookupdev is broken on windows */    
+#if defined(WIN32)  /* pcap_lookupdev is broken on windows */
   pcap_if_t *alldevs;
   pcap_if_t *d;
 
@@ -85,7 +89,7 @@ rbpcap_s_lookupdev(VALUE self)
           break;
       }
   }
-  
+
   if (dev == NULL) {
       rb_raise(eBindingError,"%s","No valid interfaces found, Make sure WinPcap is installed.\n");
   }
@@ -164,7 +168,7 @@ rbpcap_s_lookupnet(VALUE self, VALUE dev)
   struct in_addr addr;
   char eb[PCAP_ERRBUF_SIZE];
 	VALUE list;
-	
+
   Check_Type(dev, T_STRING);
   if (pcap_lookupnet(StringValuePtr(dev), &net, &mask, eb) == -1) {
 	  rb_raise(rb_eRuntimeError, "%s", eb);
@@ -179,7 +183,7 @@ rbpcap_s_lookupnet(VALUE self, VALUE dev)
 }
 
 /*
-* Check if PCAP file or device is bound and loaded 
+* Check if PCAP file or device is bound and loaded
 */
 static int rbpcap_ready(rbpcap_t *rbp) {
 	if(! rbp->pd) {
@@ -196,7 +200,7 @@ static int rbpcap_ready(rbpcap_t *rbp) {
 static void rbpcap_free(rbpcap_t *rbp) {
 	if (rbp->pd)
 		pcap_close(rbp->pd);
-	
+
 	if (rbp->pdt)
 		pcap_dump_close(rbp->pdt);
 
@@ -210,15 +214,11 @@ static void rbpcap_free(rbpcap_t *rbp) {
 */
 static void rbpacket_free(rbpacket_t *rbpacket)
 {
-  
-  if(rbpacket->hdr != NULL) {
-    rbpacket->hdr = NULL;
-  }
-  
+
   if(rbpacket->pkt != NULL) {
     rbpacket->pkt = NULL;
   }
-  
+
   free(rbpacket);
 }
 
@@ -317,6 +317,73 @@ rbpcap_settimeout(VALUE self, VALUE timeout)
   }
 }
 
+/*
+* call-seq:
+*   listdatalinks()
+*
+* Get supported datalinks for this interface
+*
+* Returns an array of supported datalinks.
+*/
+static VALUE
+rbpcap_listdatalinks(VALUE self)
+{
+  rbpcap_t *rbp;
+  int *links, numlinks;
+  int i;
+  Data_Get_Struct(self, rbpcap_t, rbp);
+
+  numlinks = pcap_list_datalinks(rbp->pd, &links);
+  if (numlinks > 0) {
+    VALUE hash = rb_hash_new();
+    for (i = 0; i < numlinks; i++) {
+      const char *name = pcap_datalink_val_to_name(links[i]);
+      if (name != NULL) {
+        VALUE namestring = rb_str_new2(name);
+        rb_hash_aset(hash, INT2NUM(links[i]), namestring);
+      }
+    }
+    pcap_free_datalinks(links);
+    return hash;
+  } else {
+    rb_raise(eLinkTypeError, "unable to get datalinks (%d): %s", numlinks, pcap_geterr(rbp->pd));
+  }
+}
+
+
+/*
+* call-seq:
+*   setdatalink(1234)
+*
+* Set datalink type for the capture.
+*
+* Returns the object itself.
+*/
+static VALUE
+rbpcap_setdatalink(VALUE self, VALUE datalink)
+{
+  rbpcap_t *rbp;
+  int linktype, errcode;
+  Data_Get_Struct(self, rbpcap_t, rbp);
+
+  if(TYPE(datalink) == T_FIXNUM ) {
+    linktype = NUM2INT(datalink);
+  } else if (TYPE(datalink) == T_STRING) {
+    linktype = pcap_datalink_name_to_val(RSTRING_PTR(datalink));
+    if (linktype < 0) {
+      rb_raise(eLinkTypeError, "invalid datalink name: %s", RSTRING_PTR(datalink));
+    }
+  } else {
+    rb_raise(rb_eArgError, "datalink type must be a string or fixnum");
+  }
+
+  errcode = pcap_set_datalink(rbp->pd, linktype);
+  if (errcode == 0) {
+    return self;
+  } else {
+    rb_raise(eLinkTypeError, "unable to set datalink (%d): %s", errcode, pcap_geterr(rbp->pd));
+  }
+}
 
 /*
 * call-seq:
@@ -334,7 +401,7 @@ rbpcap_setsnaplen(VALUE self, VALUE snaplen)
 
   if(TYPE(snaplen) != T_FIXNUM)
     rb_raise(rb_eArgError, "snaplen must be a fixnum");
-  
+
   if (pcap_set_snaplen(rbp->pd, NUM2INT(snaplen)) == 0) {
     return self;
   } else {
@@ -376,11 +443,11 @@ rbpcap_setpromisc(VALUE self, VALUE mode)
 *   setfilter(filter)
 *
 * Provide a valid bpf-filter to apply to the packet capture
-* 
+*
 *  # Show me all SYN packets:
 *  bpf-filter = "tcp[13] & 2 != 0"
 *  capture.setfilter(bpf-filter)
-* 
+*
 * Examples:
 * * "net 10.0.0.0/8"
 * * "not tcp and dst host 192.168.1.1"
@@ -400,8 +467,8 @@ rbpcap_setfilter(VALUE self, VALUE filter)
   if(TYPE(filter) != T_STRING)
   	rb_raise(eBPFilterError, "filter must be a string");
 
-	if(! rbpcap_ready(rbp)) return self; 
-	
+	if(! rbpcap_ready(rbp)) return self;
+
   if(rbp->type == LIVE)
   	if(pcap_lookupnet(rbp->iface, &netid, &mask, eb) < 0) {
   		netid = 0;
@@ -409,12 +476,16 @@ rbpcap_setfilter(VALUE self, VALUE filter)
   		rb_warn("unable to get IP: %s", eb);
   	}
 
-  if(pcap_compile(rbp->pd, &bpf, RSTRING_PTR(filter), 0, mask) < 0)
-  	rb_raise(eBPFilterError, "invalid bpf filter");
+  if(pcap_compile(rbp->pd, &bpf, RSTRING_PTR(filter), 0, mask) < 0) {
+  	rb_raise(eBPFilterError, "invalid bpf filter: %s", pcap_geterr(rbp->pd));
+  }
 
-  if(pcap_setfilter(rbp->pd, &bpf) < 0)
-  	rb_raise(eBPFilterError, "unable to set bpf filter");
+  if(pcap_setfilter(rbp->pd, &bpf) < 0) {
+    pcap_freecode(&bpf);
+  	rb_raise(eBPFilterError, "unable to set bpf filter: %s", pcap_geterr(rbp->pd));
+  }
 
+  pcap_freecode(&bpf);
   return self;
 }
 
@@ -434,10 +505,11 @@ rbpcap_compile(VALUE self, VALUE filter) {
 
   Data_Get_Struct(self, rbpcap_t, rbp);
   if(pcap_compile(rbp->pd, &bpf, RSTRING_PTR(filter), 0, mask) < 0) {
-    rb_raise(eBPFilterError, "invalid bpf filter");
-  } else {
-    return self;
+    rb_raise(eBPFilterError, "invalid bpf filter: %s", pcap_geterr(rbp->pd));
   }
+
+  pcap_freecode(&bpf);
+  return self;
 }
 
 /*
@@ -454,7 +526,7 @@ rbpcap_activate(VALUE self)
   rbpcap_t *rbp;
   int errcode;
   Data_Get_Struct(self, rbpcap_t, rbp);
-  
+
   if ((errcode = pcap_activate(rbp->pd)) == 0) {
     return self;
   } else {
@@ -476,7 +548,7 @@ rbpcap_close(VALUE self)
 {
   rbpcap_t *rbp;
   Data_Get_Struct(self, rbpcap_t, rbp);
-  
+
   pcap_close(rbp->pd);
   rbp->pd = NULL;
   return self;
@@ -495,7 +567,7 @@ rbpcap_create(VALUE self, VALUE iface)
   strncpy(rbp->iface, RSTRING_PTR(iface), sizeof(rbp->iface) - 1);
 
   if(rbp->pd) {
-    pcap_close(rbp->pd);  
+    pcap_close(rbp->pd);
   }
 
   rbp->pd = pcap_create(
@@ -510,13 +582,13 @@ rbpcap_create(VALUE self, VALUE iface)
 }
 
 /*
-* 
+*
 * call-seq:
 *   create(iface) -> self
 *
 *   capture = ::Pcap.create(@dev)
 *
-* Returns the object itself.  
+* Returns the object itself.
 */
 static VALUE
 rbpcap_create_s(VALUE class, VALUE iface)
@@ -562,7 +634,7 @@ rbpcap_open_live(VALUE self, VALUE iface,VALUE snaplen,VALUE promisc, VALUE time
 
 
   if(rbp->pd) {
-      pcap_close(rbp->pd);	
+      pcap_close(rbp->pd);
   }
 
   rbp->pd = pcap_open_live(
@@ -580,13 +652,13 @@ rbpcap_open_live(VALUE self, VALUE iface,VALUE snaplen,VALUE promisc, VALUE time
 }
 
 /*
-* 
+*
 * call-seq:
 *   open_live(iface, snaplen, promisc, timeout) -> self
 *
 *   capture = ::Pcap.open_live(@dev, @snaplength, @promiscous_mode, @timeout)
 *
-* Returns the object itself.  
+* Returns the object itself.
 */
 static VALUE
 rbpcap_open_live_s(VALUE class, VALUE iface, VALUE snaplen, VALUE promisc, VALUE timeout)
@@ -622,11 +694,11 @@ rbpcap_open_offline(VALUE self, VALUE filename)
 }
 
 /*
-* 
+*
 * call-seq:
 *   open_offline(filename) -> self
 *
-*   capture = ::Pcap.open_offline(filename)  
+*   capture = ::Pcap.open_offline(filename)
 *
 * Returns the object itself.
 */
@@ -638,7 +710,7 @@ rbpcap_open_offline_s(VALUE class, VALUE filename)
   return rbpcap_open_offline(iPcap, filename);
 }
 
-// transparent method 
+// transparent method
 static VALUE
 rbpcap_open_dead(VALUE self, VALUE linktype, VALUE snaplen)
 {
@@ -665,7 +737,7 @@ rbpcap_open_dead(VALUE self, VALUE linktype, VALUE snaplen)
 
 
 /*
-* 
+*
 * call-seq:
 *   open_dead(linktype, snaplen) -> self
 *
@@ -701,19 +773,19 @@ rbpcap_dump_open(VALUE self, VALUE filename)
 
   if(TYPE(filename) != T_STRING)
      rb_raise(rb_eArgError, "filename must be a string");
-      
+
   Data_Get_Struct(self, rbpcap_t, rbp);
-  
+
   if(! rbpcap_ready(rbp)) return self;
-  
+
   rbp->pdt = pcap_dump_open(
       rbp->pd,
       RSTRING_PTR(filename)
   );
-  
+
   if(!rbp->pdt)
   	rb_raise(eDumperError, "Stream could not be initialized or opened.");
-  
+
   return self;
 }
 
@@ -727,21 +799,21 @@ static VALUE
 rbpcap_dump_close(VALUE self)
 {
   rbpcap_t *rbp;
-  
+
   Data_Get_Struct(self, rbpcap_t, rbp);
-  
+
   if(! rbpcap_ready(rbp)) return self;
-  
+
   if(!rbp->pdt)
   	rb_raise(eDumperError, "Stream is already closed.");
-  
+
   if (rbp->pdt)
 	  pcap_dump_close(rbp->pdt);
-	  
-  rbp->pdt = NULL;  
+
+  rbp->pdt = NULL;
 
   return self;
-	
+
 }
 
 
@@ -769,17 +841,21 @@ rbpcap_dump(VALUE self, VALUE caplen, VALUE pktlen, VALUE packet)
       rb_raise(rb_eArgError, "pktlen must be a fixnum");
 
   Data_Get_Struct(self, rbpcap_t, rbp);
-  
+
   gettimeofday(&pcap_hdr.ts, NULL);
   pcap_hdr.caplen = NUM2UINT(caplen);
   pcap_hdr.len = NUM2UINT(pktlen);
 
-//capture.next is yeilding an 8Bit ASCII  string 
+  if(!rbp->pdt) {
+      rb_raise(rb_eRuntimeError, "pcap_dumper not defined. You must open a dump file first");
+  }
+
+//capture.next is yeilding an 8Bit ASCII  string
 //  ->  return rb_str_new((char *) job.pkt, job.hdr.caplen);
 //Call dump such that capture.next{|pk| capture.dump(pk.length, pk.length, pk)}
 
-  pcap_dump( 
-      (u_char*)rbp->pdt,        
+  pcap_dump(
+      (u_char*)rbp->pdt,
       &pcap_hdr,
       (unsigned char *)RSTRING_PTR(packet)
   );
@@ -793,8 +869,8 @@ rbpcap_dump(VALUE self, VALUE caplen, VALUE pktlen, VALUE packet)
 * call-seq:
 *   inject(payload)
 *
-* inject() transmit a raw packet through the network interface  
-* 
+* inject() transmit a raw packet through the network interface
+*
 * Returns the number of bytes written on success else raise failure.
 */
 static VALUE
@@ -803,13 +879,13 @@ rbpcap_inject(VALUE self, VALUE payload)
   rbpcap_t *rbp;
 
   if(TYPE(payload) != T_STRING)
-  	rb_raise(rb_eArgError, "payload must be a string");
+  	rb_raise(rb_eArgError, "pupayload must be a string");
 
   Data_Get_Struct(self, rbpcap_t, rbp);
 
-	if(! rbpcap_ready(rbp)) return self; 
-#if defined(WIN32)   
-  /* WinPcap does not have a pcap_inject call we use pcap_sendpacket, if it suceedes 
+	if(! rbpcap_ready(rbp)) return self;
+#if defined(WIN32)
+  /* WinPcap does not have a pcap_inject call we use pcap_sendpacket, if it suceedes
    * we simply return the amount of packets request to inject, else we fail.
    */
   if(pcap_sendpacket(rbp->pd, RSTRING_PTR(payload), RSTRING_LEN(payload)) != 0) {
@@ -836,7 +912,7 @@ static void rbpcap_handler(rbpcapjob_t *job, struct pcap_pkthdr *hdr, u_char *pk
 /*
 **
 * Returns the next packet from the packet capture device.
-* 
+*
 * Returns a string with the packet data.
 *
 * If the next_data() is unsuccessful, Null is returned.
@@ -847,11 +923,11 @@ rbpcap_next_data(VALUE self)
 	rbpcap_t *rbp;
 	rbpcapjob_t job;
 	char eb[PCAP_ERRBUF_SIZE];
-	int ret;	
-	
+	int ret;
+
 	Data_Get_Struct(self, rbpcap_t, rbp);
-	
-	if(! rbpcap_ready(rbp)) return self; 
+
+	if(! rbpcap_ready(rbp)) return self;
 	pcap_setnonblock(rbp->pd, 1, eb);
 
 #ifdef MAKE_TRAP
@@ -865,7 +941,7 @@ rbpcap_next_data(VALUE self)
 	TRAP_END;
 #endif
 
-	if(rbp->type == OFFLINE && ret <= 0) 
+	if(rbp->type == OFFLINE && ret <= 0)
 	  return Qnil;
 
 	if(ret > 0 && job.hdr.caplen > 0)
@@ -878,7 +954,7 @@ rbpcap_next_data(VALUE self)
 /*
 *
 * Returns the next packet from the packet capture device.
-* 
+*
 * Returns a string with the packet data.
 *
 * If the next_packet() is unsuccessful, Null is returned.
@@ -886,38 +962,38 @@ rbpcap_next_data(VALUE self)
 
 static VALUE
 rbpcap_next_packet(VALUE self)
-{	
+{
 	rbpcap_t *rbp;
 	rbpcapjob_t job;
 	char eb[PCAP_ERRBUF_SIZE];
-	int ret;	
-	
+	int ret;
+
 	rbpacket_t* rbpacket;
-	
+
 	Data_Get_Struct(self, rbpcap_t, rbp);
-	
-	if(! rbpcap_ready(rbp)) return self; 
+
+	if(! rbpcap_ready(rbp)) return self;
 
 	pcap_setnonblock(rbp->pd, 1, eb);
 
 #ifdef MAKE_TRAP
 	TRAP_BEG;
 #endif
-  	
+
 	ret = pcap_dispatch(rbp->pd, 1, (pcap_handler) rbpcap_handler, (u_char *)&job);
 
 #ifdef MAKE_TRAP
 	TRAP_END;
 #endif
 
-	if(rbp->type == OFFLINE && ret <= 0) 
+	if(rbp->type == OFFLINE && ret <= 0)
 	  return Qnil;
 
 	if(ret > 0 && job.hdr.caplen > 0)
     {
       rbpacket = ALLOC(rbpacket_t);
-      rbpacket->hdr = &job.hdr;
-      rbpacket->pkt = (u_char *)&job.pkt;
+      rbpacket->hdr = job.hdr;
+      rbpacket->pkt = (u_char *)job.pkt;
       return Data_Wrap_Struct(rb_cPkt, 0, rbpacket_free, rbpacket);
     }
 
@@ -927,7 +1003,7 @@ rbpcap_next_packet(VALUE self)
 
 /*
 * call-seq:
-*   each_data() { |packet| ... } 
+*   each_data() { |packet| ... }
 *
 * Yields each packet from the capture to the passed-in block in turn.
 *
@@ -937,11 +1013,10 @@ rbpcap_each_data(VALUE self)
 {
   rbpcap_t *rbp;
   int fno = -1;
-	
   Data_Get_Struct(self, rbpcap_t, rbp);
 
-	if(! rbpcap_ready(rbp)) return self; 
-	
+  if(! rbpcap_ready(rbp)) return self;
+
 #if defined(WIN32)
   fno = (int)pcap_getevent(rbp->pd);
 #else
@@ -960,7 +1035,7 @@ rbpcap_each_data(VALUE self)
 
 /*
 * call-seq:
-*   each_packet() { |packet| ... } 
+*   each_packet() { |packet| ... }
 *
 * Yields a PCAP::Packet from the capture to the passed-in block in turn.
 *
@@ -969,12 +1044,16 @@ static VALUE
 rbpcap_each_packet(VALUE self)
 {
   rbpcap_t *rbp;
-  int fno = -1;
-	
-  Data_Get_Struct(self, rbpcap_t, rbp);
 
-	if(! rbpcap_ready(rbp)) return self; 
-	
+#if defined(WIN32)
+  HANDLE fno;
+#else
+  int fno = -1;
+#endif
+
+  Data_Get_Struct(self, rbpcap_t, rbp);
+  if(! rbpcap_ready(rbp)) return self;
+
 #if defined(WIN32)
   fno = (int)pcap_getevent(rbp->pd);
 #else
@@ -995,8 +1074,8 @@ rbpcap_each_packet(VALUE self)
 * call-seq:
 *   datalink()
 *
-* Returns the integer datalink value unless capture 
-* 
+* Returns the integer datalink value unless capture
+*
 *   foo.bar unless capture.datalink == Pcap::DLT_EN10MB
 */
 static VALUE
@@ -1007,7 +1086,7 @@ rbpcap_datalink(VALUE self)
   Data_Get_Struct(self, rbpcap_t, rbp);
 
 	if(! rbpcap_ready(rbp)) return self;
-	
+
   return INT2NUM(pcap_datalink(rbp->pd));
 }
 
@@ -1015,8 +1094,8 @@ rbpcap_datalink(VALUE self)
 * call-seq:
 *   pcap_major_version()
 *
-* Returns the integer PCAP MAJOR LIBRARY value unless capture 
-* 
+* Returns the integer PCAP MAJOR LIBRARY value unless capture
+*
 */
 static VALUE
 rbpcap_major_version(VALUE self)
@@ -1024,9 +1103,9 @@ rbpcap_major_version(VALUE self)
   rbpcap_t *rbp;
 
   Data_Get_Struct(self, rbpcap_t, rbp);
-	
+
 	if(! rbpcap_ready(rbp)) return self;
-	
+
   return INT2NUM(pcap_major_version(rbp->pd));
 }
 
@@ -1034,8 +1113,8 @@ rbpcap_major_version(VALUE self)
 * call-seq:
 *   pcap_minor_version()
 *
-* Returns the integer PCAP MINOR LIBRARY value unless capture 
-* 
+* Returns the integer PCAP MINOR LIBRARY value unless capture
+*
 */
 static VALUE
 rbpcap_minor_version(VALUE self)
@@ -1043,9 +1122,9 @@ rbpcap_minor_version(VALUE self)
   rbpcap_t *rbp;
 
   Data_Get_Struct(self, rbpcap_t, rbp);
-	
+
 	if(! rbpcap_ready(rbp)) return self;
-	
+
   return INT2NUM(pcap_minor_version(rbp->pd));
 }
 
@@ -1054,7 +1133,7 @@ rbpcap_minor_version(VALUE self)
 *   snapshot()
 *
 * Returns the snapshot length, which is the number of bytes to save for each packet captured.
-* 
+*
 */
 static VALUE
 rbpcap_snapshot(VALUE self)
@@ -1064,7 +1143,7 @@ rbpcap_snapshot(VALUE self)
   Data_Get_Struct(self, rbpcap_t, rbp);
 
 	if(! rbpcap_ready(rbp)) return self;
-	
+
   return INT2NUM(pcap_snapshot(rbp->pd));
 }
 
@@ -1075,9 +1154,9 @@ rbpcap_snapshot(VALUE self)
 * Returns a hash with statistics of the packet capture
 *
 * - ["recv"] # number of packets received
-* - ["drop"] # number of packets dropped 
+* - ["drop"] # number of packets dropped
 * - ["idrop"] # number of packets dropped by interface
-* 
+*
 */
 static VALUE
 rbpcap_stats(VALUE self)
@@ -1085,14 +1164,14 @@ rbpcap_stats(VALUE self)
   rbpcap_t *rbp;
   struct pcap_stat stat;
   VALUE hash;
-  
+
   Data_Get_Struct(self, rbpcap_t, rbp);
 
 	if(! rbpcap_ready(rbp)) return self;
-		
+
   if (pcap_stats(rbp->pd, &stat) == -1)
   	return Qnil;
-  	
+
   hash = rb_hash_new();
   rb_hash_aset(hash, rb_str_new2("recv"), UINT2NUM(stat.ps_recv));
   rb_hash_aset(hash, rb_str_new2("drop"), UINT2NUM(stat.ps_drop));
@@ -1101,94 +1180,91 @@ rbpcap_stats(VALUE self)
 
 //#if defined(WIN32)
 //    rb_hash_aset(hash, rb_str_new2("bs_capt"), UINT2NUM(stat.bs_capt));
-//#endif    
-    
+//#endif
+
   return hash;
 }
 
 /*
 *
-* Returns the EPOCH integer from the ts.tv_sec record in the PCAP::Packet header  
-* 
+* Returns the EPOCH integer from the ts.tv_sec record in the PCAP::Packet header
+*
 */
-static VALUE 
+static VALUE
 rbpacket_time(VALUE self)
 {
   rbpacket_t* rbpacket;
   Data_Get_Struct(self, rbpacket_t, rbpacket);
-  return INT2NUM(rbpacket->hdr->ts.tv_sec);
+  return INT2NUM(rbpacket->hdr.ts.tv_sec);
 }
 
 /*
 *
-* Returns the tv_usec integer from the ts.tv_usec record in the PCAP::Packet header  
-* timestamp microseconds 
-* the microseconds when this packet was captured, as an offset to ts_sec. 
-* Beware: this value shouldn't reach 1 second (1 000 000), in this case ts_sec must be increased instead! 
+* Returns the tv_usec integer from the ts.tv_usec record in the PCAP::Packet header
+* timestamp microseconds
+* the microseconds when this packet was captured, as an offset to ts_sec.
+* Beware: this value shouldn't reach 1 second (1 000 000), in this case ts_sec must be increased instead!
 *
 * Ruby Microsecond Handling
 * Time.at(946684800.2).usec #=> 200000
 * Time.now.usec
 */
 
-static VALUE 
+static VALUE
 rbpacket_microsec(VALUE self)
 {
   rbpacket_t* rbpacket;
   Data_Get_Struct(self, rbpacket_t, rbpacket);
-  return INT2NUM(rbpacket->hdr->ts.tv_usec);
+  return INT2NUM(rbpacket->hdr.ts.tv_usec);
 }
 
 
 /*
 *
-* Returns the integer length of packet length field from the in the PCAP::Packet header 
-* 
+* Returns the integer length of packet length field from the in the PCAP::Packet header
+*
 */
-static VALUE 
+static VALUE
 rbpacket_length(VALUE self)
 {
   rbpacket_t* rbpacket;
   Data_Get_Struct(self, rbpacket_t, rbpacket);
-  return INT2NUM(rbpacket->hdr->len);
+  return INT2NUM(rbpacket->hdr.len);
 }
 
 /*
 *
-* Returns the integer length of capture len from the in the PCAP::Packet header 
-* 
+* Returns the integer length of capture len from the in the PCAP::Packet header
+*
 */
-static VALUE 
+static VALUE
 rbpacket_caplen(VALUE self)
 {
   rbpacket_t* rbpacket;
   Data_Get_Struct(self, rbpacket_t, rbpacket);
 
-  if (rbpacket->hdr == NULL)
-    return Qnil;
-
   //test incorrect case
-  if (rbpacket->hdr->caplen > rbpacket->hdr->len)
-    return INT2NUM(rbpacket->hdr->len);
+  if (rbpacket->hdr.caplen > rbpacket->hdr.len)
+    return INT2NUM(rbpacket->hdr.len);
 
-  return INT2NUM(rbpacket->hdr->caplen);
+  return INT2NUM(rbpacket->hdr.caplen);
 }
 
 /*
 *
-* Returns the integer PCAP MINOR LIBRARY value unless capture 
-* 
+* Returns the integer PCAP MINOR LIBRARY value unless capture
+*
 */
-static VALUE 
+static VALUE
 rbpacket_data(VALUE self)
 {
   rbpacket_t* rbpacket;
   Data_Get_Struct(self, rbpacket_t, rbpacket);
 
-  if ((rbpacket->pkt == NULL) || (rbpacket->hdr == NULL) || (rbpacket->hdr->caplen > rbpacket->hdr->len))
+  if ((rbpacket->pkt == NULL) || (rbpacket->hdr.caplen > rbpacket->hdr.len))
     return Qnil;
 
-  return rb_str_new((char *) rbpacket->pkt, rbpacket->hdr->caplen); 
+  return rb_str_new((char *) rbpacket->pkt, rbpacket->hdr.caplen);
 }
 
 #if defined(WIN32)
@@ -1232,24 +1308,25 @@ rbpcap_thread_wait_fd(int fno)
 }
 
 void
-Init_pcaprub()
+Init_pcaprub_c()
 {
   /*
   * Document-class: Pcap
-  * 
+  *
   * Main class defined by the pcaprub extension.
   */
   mPCAP = rb_define_module("PCAPRUB");
-  
+
   rb_cPcap = rb_define_class_under(mPCAP,"Pcap", rb_cObject);
   rb_cPkt = rb_define_class_under(mPCAP,"Packet", rb_cObject);
-  
+
   ePCAPRUBError = rb_path2class("PCAPRUB::PCAPRUBError");
   eBindingError = rb_path2class("PCAPRUB::BindingError");
   eBPFilterError = rb_path2class("PCAPRUB::BPFError");
   eDumperError = rb_path2class("PCAPRUB::DumperError");
-  
-  rb_define_module_function(rb_cPcap, "lookupdev", rbpcap_s_lookupdev, 0);  
+  eLinkTypeError = rb_path2class("PCAPRUB::LinkTypeError");
+
+  rb_define_module_function(rb_cPcap, "lookupdev", rbpcap_s_lookupdev, 0);
   rb_define_module_function(rb_cPcap, "lookupnet", rbpcap_s_lookupnet, 1);
   rb_define_module_function(rb_cPcap, "lookupaddrs", rbpcap_s_lookupaddrs, 1);
 	
@@ -1274,7 +1351,7 @@ Init_pcaprub()
   rb_define_const(rb_cPcap, "DLT_LINUX_SLL", INT2NUM(DLT_LINUX_SLL));
   rb_define_const(rb_cPcap, "DLT_PRISM_HEADER", INT2NUM(DLT_PRISM_HEADER));
   rb_define_const(rb_cPcap, "DLT_AIRONET_HEADER", INT2NUM(DLT_AIRONET_HEADER));
-  /* Pcap Error Codes 
+  /* Pcap Error Codes
    * Error codes for the pcap API.
    * These will all be negative, so you can check for the success or
    * failure of a call that returns these codes by checking for a
@@ -1310,7 +1387,7 @@ Init_pcaprub()
   rb_define_singleton_method(rb_cPcap, "open_live", rbpcap_open_live_s, 4);
   rb_define_singleton_method(rb_cPcap, "open_offline", rbpcap_open_offline_s, 1);
   rb_define_singleton_method(rb_cPcap, "open_dead", rbpcap_open_dead_s, 2);
-  
+
   rb_define_method(rb_cPcap, "dump_open", rbpcap_dump_open, 1);
   rb_define_method(rb_cPcap, "dump_close", rbpcap_dump_close, 0);
   rb_define_method(rb_cPcap, "dump", rbpcap_dump, 3);
@@ -1336,6 +1413,8 @@ Init_pcaprub()
   rb_define_method(rb_cPcap, "setsnaplen", rbpcap_setsnaplen, 1);
   rb_define_method(rb_cPcap, "settimeout", rbpcap_settimeout, 1);
   rb_define_method(rb_cPcap, "setpromisc", rbpcap_setpromisc, 1);
+  rb_define_method(rb_cPcap, "setdatalink", rbpcap_setdatalink, 1);
+  rb_define_method(rb_cPcap, "listdatalinks", rbpcap_listdatalinks, 0);
   rb_define_method(rb_cPcap, "activate", rbpcap_activate, 0);
   rb_define_method(rb_cPcap, "inject", rbpcap_inject, 1);
   rb_define_method(rb_cPcap, "datalink", rbpcap_datalink, 0);
@@ -1350,9 +1429,9 @@ Init_pcaprub()
   */
   rb_define_method(rb_cPcap, "snaplen", rbpcap_snapshot, 0);
   rb_define_method(rb_cPcap, "stats", rbpcap_stats, 0);
-  
+
   rb_define_singleton_method(rb_cPkt, "new", rbpacket_new_s, 0);
-  
+
   rb_define_method(rb_cPkt, "time", rbpacket_time, 0);
   rb_define_method(rb_cPkt, "microsec", rbpacket_microsec, 0);
   rb_define_method(rb_cPkt, "length", rbpacket_length, 0);

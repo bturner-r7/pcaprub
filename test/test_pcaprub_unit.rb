@@ -142,6 +142,13 @@ class Pcap::UnitTest < Test::Unit::TestCase
     o.close
   end
 
+  def test_set_datalink
+    d = Pcap.lookupdev
+    o = Pcap.open_live(d, 65535, true, -1)
+    dls = o.listdatalinks
+    assert_equal(o,o.setdatalink(dls.values.first))
+  end
+
   def test_monitor
     return if RUBY_PLATFORM =~ /mingw|win/
     d = Pcap.lookupdev
@@ -149,6 +156,18 @@ class Pcap::UnitTest < Test::Unit::TestCase
     assert_equal(o, o.setmonitor(true))
   end
 
+  def test_filter
+    d = Pcap.lookupdev
+    o = Pcap.create(d)
+    o.activate
+    assert_nothing_raised do
+      o.compile("ip host 1.2.3.4")
+    end
+    assert_raise PCAPRUB::BPFError do
+      o.compile("A non working filter")
+    end
+  end
+  
   def test_netifaces_constants
     log "AF_LINK Value is #{Pcap::AF_LINK}"
     assert_equal(Fixnum, Pcap::AF_LINK.class)

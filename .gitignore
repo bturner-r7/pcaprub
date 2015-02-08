@@ -23,3 +23,6 @@ Makefile
 mkmf.log
 tmp
 lib/pcaprub.bundle
+*.so
+*.lock
+*.gemspec
