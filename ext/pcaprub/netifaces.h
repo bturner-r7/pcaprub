@@ -70,53 +70,53 @@
 /* Map address families to sizes of sockaddr structs */
 static int af_to_len(int af) 
 {
-	switch (af) 
-	{
-  	case AF_INET: return sizeof (struct sockaddr_in);
+  switch (af) 
+  {
+    case AF_INET: return sizeof (struct sockaddr_in);
 #if defined(AF_INET6) && HAVE_SOCKADDR_IN6
-  	case AF_INET6: return sizeof (struct sockaddr_in6);
+    case AF_INET6: return sizeof (struct sockaddr_in6);
 #endif
 #if defined(AF_AX25) && HAVE_SOCKADDR_AX25
 #  if defined(AF_NETROM)
-  	case AF_NETROM: /* I'm assuming this is carried over x25 */
+    case AF_NETROM: /* I'm assuming this is carried over x25 */
 #  endif
-  	case AF_AX25: return sizeof (struct sockaddr_ax25);
+    case AF_AX25: return sizeof (struct sockaddr_ax25);
 #endif
 #if defined(AF_IPX) && HAVE_SOCKADDR_IPX
-  	case AF_IPX: return sizeof (struct sockaddr_ipx);
+    case AF_IPX: return sizeof (struct sockaddr_ipx);
 #endif
 #if defined(AF_APPLETALK) && HAVE_SOCKADDR_AT
-  	case AF_APPLETALK: return sizeof (struct sockaddr_at);
+    case AF_APPLETALK: return sizeof (struct sockaddr_at);
 #endif
 #if defined(AF_ATMPVC) && HAVE_SOCKADDR_ATMPVC
-  	case AF_ATMPVC: return sizeof (struct sockaddr_atmpvc);
+    case AF_ATMPVC: return sizeof (struct sockaddr_atmpvc);
 #endif
 #if defined(AF_ATMSVC) && HAVE_SOCKADDR_ATMSVC
-  	case AF_ATMSVC: return sizeof (struct sockaddr_atmsvc);
+    case AF_ATMSVC: return sizeof (struct sockaddr_atmsvc);
 #endif
 #if defined(AF_X25) && HAVE_SOCKADDR_X25
-  	case AF_X25: return sizeof (struct sockaddr_x25);
+    case AF_X25: return sizeof (struct sockaddr_x25);
 #endif
 #if defined(AF_ROSE) && HAVE_SOCKADDR_ROSE
-  	case AF_ROSE: return sizeof (struct sockaddr_rose);
+    case AF_ROSE: return sizeof (struct sockaddr_rose);
 #endif
 #if defined(AF_DECnet) && HAVE_SOCKADDR_DN
-  	case AF_DECnet: return sizeof (struct sockaddr_dn);
+    case AF_DECnet: return sizeof (struct sockaddr_dn);
 #endif
 #if defined(AF_PACKET) && HAVE_SOCKADDR_LL
-  	case AF_PACKET: return sizeof (struct sockaddr_ll);
+    case AF_PACKET: return sizeof (struct sockaddr_ll);
 #endif
 #if defined(AF_ASH) && HAVE_SOCKADDR_ASH
-  	case AF_ASH: return sizeof (struct sockaddr_ash);
+    case AF_ASH: return sizeof (struct sockaddr_ash);
 #endif
 #if defined(AF_ECONET) && HAVE_SOCKADDR_EC
-  	case AF_ECONET: return sizeof (struct sockaddr_ec);
+    case AF_ECONET: return sizeof (struct sockaddr_ec);
 #endif
 #if defined(AF_IRDA) && HAVE_SOCKADDR_IRDA
-  	case AF_IRDA: return sizeof (struct sockaddr_irda);
+    case AF_IRDA: return sizeof (struct sockaddr_irda);
 #endif
-	}
-	return sizeof (struct sockaddr);
+  }
+  return sizeof (struct sockaddr);
 }
 
 #define SA_LEN(sa)      af_to_len(sa->sa_family)
@@ -177,7 +177,7 @@ static int af_to_len(int af)
 //Prototypes
 //Get a list of the adresses for a network interface
 VALUE rbnetifaces_s_addresses (VALUE class, VALUE dev);
-//Get a list of the network interfaces 
+//Get a list of the network interfaces
 VALUE rbnetifaces_s_interfaces (VALUE self);
 //This function is usefull only under windows to retrieve some additionnal interfaces informations
 VALUE rbnetifaces_s_interface_info (VALUE self, VALUE dev);

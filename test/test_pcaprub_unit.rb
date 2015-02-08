@@ -6,6 +6,11 @@ $:.unshift(File.join(File.dirname(base)))
 require 'test/unit'
 require 'pcaprub'
 
+def log(msg)
+  # Uncomment following line to print debug log messages:
+  #puts msg
+end
+
 #
 # Simple unit test, requires r00t.
 #
@@ -13,19 +18,19 @@ require 'pcaprub'
 class Pcap::UnitTest < Test::Unit::TestCase
   def test_version
     assert_equal(String, Pcap.version.class)
-    puts "Pcaprub version: #{Pcap.version}"
+    log "Pcaprub version: #{Pcap.version}"
   end
 
   def test_lookupdev
     assert_equal(String, Pcap.lookupdev.class)
-    puts "Pcaprub default device: #{Pcap.lookupdev}"
+    log "Pcaprub default device: #{Pcap.lookupdev}"
   end
 
   def test_lookupnet
     dev = Pcap.lookupdev
     assert_equal(Array, Pcap.lookupnet(dev).class)
     net = Pcap.lookupnet(dev)
-    puts "Pcaprub net (#{dev}): #{net[0]} #{[net[1]].pack("N").unpack("H*")[0]}"
+    log "Pcaprub net (#{dev}): #{net[0]} #{[net[1]].pack("N").unpack("H*")[0]}"
   end
 
   def test_pcap_new
@@ -104,9 +109,9 @@ class Pcap::UnitTest < Test::Unit::TestCase
     end
 
     t.kill
-    puts "Background thread ticked #{@c} times while capture was running"
-    puts "Captured #{pkt_count} packets"
-    assert(0 < @c, "Background thread failed to tick while capture was running");
+    log "Background thread ticked #{@c} times while capture was running"
+    log "Captured #{pkt_count} packets"
+    assert(90 < @c && @c < 110, "Background thread should tick about 100 times, got: #{@c}");
     true
   end
 
@@ -142,24 +147,44 @@ class Pcap::UnitTest < Test::Unit::TestCase
       o.compile("A non working filter")
     end
   end
-	def test_netifaces_constants
-		puts "AF_LINK Value is #{Pcap::AF_LINK}" 
-		puts "AF_INET Value is #{Pcap::AF_INET}" 
-		puts "AF_INET6 Value is #{Pcap::AF_INET6}" if Pcap.const_defined?(:AF_INET6)
-	end
+  
+  def test_netifaces_constants
+    log "AF_LINK Value is #{Pcap::AF_LINK}"
+    assert_equal(Fixnum, Pcap::AF_LINK.class)
+    log "AF_INET Value is #{Pcap::AF_INET}"
+    assert_equal(Fixnum, Pcap::AF_INET.class)
+    log "AF_INET6 Value is #{Pcap::AF_INET6}" if Pcap.const_defined?(:AF_INET6)
+    assert_equal(Fixnum, Pcap::AF_INET6.class) if Pcap.const_defined?(:AF_INET6)
+  end
 
-	def test_netifaces_functions
-		Pcap.interfaces.sort.each do |iface| 
-			puts "#{iface} :"
-			Pcap.addresses(iface).sort.each do |family,values|
-				puts "\t#{family} :"
-				values.each do |val| 
-					puts "\t\taddr : #{val['addr']}" if val.has_key?("addr")
-					puts "\t\tnetmask : #{val['netmask']}" if val.has_key?("netmask")
-					puts "\t\tbroadcast : #{val['broadcast']}" if val.has_key?("broadcast")
-					puts "\n"
-				end
-			end
-		end
-	end
+  def test_netifaces_functions
+    mac = /^([\da-fA-F]{2}:){5}[\da-fA-F]{2}$/
+    ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/
+    ipv6 = /:[\da-fA-F]/
+    Pcap.interfaces.sort.each do |iface|
+      log "#{iface} :"
+      assert_equal(String, iface.class)
+      Pcap.addresses(iface).sort.each do |family,values|
+        log "\t#{family} :"
+        assert_equal(Fixnum, family.class)
+        values.each do |val|
+          log "\t\taddr : #{val['addr']}" if val.has_key?("addr")
+          log "\t\tnetmask : #{val['netmask']}" if val.has_key?("netmask")
+          log "\t\tbroadcast : #{val['broadcast']}" if val.has_key?("broadcast")
+          log "\n"
+          case family
+          when Pcap::AF_LINK
+            assert_match(mac, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+          when Pcap::AF_INET
+            assert_match(ipv4, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+            assert_match(ipv4, val['netmask']) if val.has_key?('netmask') && !val['netmask'].empty?
+            assert_match(ipv4, val['broadcast']) if val.has_key?('broadcast') && !val['broadcast'].empty?
+          when Pcap::AF_INET6
+            assert_match(ipv6, val['addr']) if val.has_key?('addr') && !val['addr'].empty?
+            assert_match(ipv6, val['netmask']) if val.has_key?('netmask') && !val['netmask'].empty?
+          end
+        end
+      end
+    end
+  end
 end

@@ -108,7 +108,6 @@ rbpcap_s_lookupaddrs(VALUE self,VALUE dev)
     char *ldev = NULL;
     pcap_addr_t *addresses, *a = NULL;
     char eb[PCAP_ERRBUF_SIZE];
-    VALUE ret_dev;  /* device string to return */   
     pcap_if_t *alldevs;
     pcap_if_t *d;
     VALUE list;
@@ -1450,7 +1449,7 @@ Init_pcaprub_c()
 	rb_define_module_function(rb_cPcap, "interface_info", rbnetifaces_s_interface_info, 1);
 
 	//constants
-	// Address families (auto-detect using #ifdef) 
+	// Address families (auto-detect using #ifdef)
 
 #ifdef AF_INET
 	rb_define_const(rb_cPcap, "AF_INET", INT2NUM(AF_INET));
@@ -1458,7 +1457,7 @@ Init_pcaprub_c()
 #ifdef AF_INET6
 	rb_define_const(rb_cPcap, "AF_INET6", INT2NUM(AF_INET6));
 #endif
-#ifdef AF_UNSPEC  
+#ifdef AF_UNSPEC
 	rb_define_const(rb_cPcap, "AF_UNSPEC", INT2NUM(AF_UNSPEC));
 #endif
 #ifdef AF_UNIX
@@ -1471,10 +1470,10 @@ Init_pcaprub_c()
 #ifdef AF_AX25
 	rb_define_const(rb_cPcap, "AF_AX25", INT2NUM(AF_AX25));
 #endif
-#ifdef AF_IMPLINK  
+#ifdef AF_IMPLINK
 	rb_define_const(rb_cPcap, "AF_IMPLINK", INT2NUM(AF_IMPLINK));
 #endif
-#ifdef AF_PUP  
+#ifdef AF_PUP
 	rb_define_const(rb_cPcap, "AF_PUP", INT2NUM(AF_PUP));
 #endif
 #ifdef AF_CHAOS
